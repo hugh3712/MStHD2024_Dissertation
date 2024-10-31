@@ -1,0 +1,603 @@
+```{r}
+rm(list = ls())
+setwd("/Users/r.h.wang/Documents/Mst HD/0. Disso Writing/Analytics/R")#set up working space
+library(readxl)  #For reading Excel files into R.
+library(tableone) #For creating summary statistics tables in medical research
+library(tidyverse) #A collection of R packages for data science, including ggplot2, dplyr, and more.
+library(questionr) #Provides functions to manipulate dataframes and variables
+library(dplyr) 
+library(mice)
+library(lattice) #improved data visualization and plotting
+library(MASS)  #provides functions and datasets from the book "Modern Applied Statistics with S".
+library(nnet)  #for neural networks and multinomial log-linear models
+library(VIM)  #For visualizing and imputing missing values
+library(mice) #For multiple imputation of missing data.
+library(ranger) #provides a fast implementation of random forests.
+library(car) #Contains functions for regression modeling, diagnostic plots, and more
+library(writexl)# For exporting data to Excel format
+```
+
+
+```{r}
+# 1.Load data
+data_all <- read_excel("/Users/r.h.wang/Documents/Mst HD/0. Disso Writing/Analytics/2710_ongoing report/data_analysis.xlsx", 
+                       sheet = "Sheet1")
+feature<- read_excel("/Users/r.h.wang/Documents/Mst HD/0. Disso Writing/Analytics/R/page snomed code.xlsx", 
+                       sheet = "feature")
+
+# 2.create a new column yDEAD in data_all that is a copy of the existing DEAD column.
+data_all$yDEAD<-data_all$DEAD
+
+#3. Filters the feature DataFrame to selects names of features from the feature dataframe where the factor column is greater than 0; The result is stored in a, which is likely a vector of column names.
+a<-feature[feature$factor>0,'name']$name
+
+data_all[,a]<-lapply(data_all[,a],as.factor)
+# This applies the as.factor() function to all columns in data_all whose names are in a.
+# It converts these columns from their current type (likely numeric) to factors (categorical variables).
+
+#4. Recode Dead and Covid variables
+data_all$DEAD<-factor(data_all$DEAD,levels=c('0','1'),labels=c('NO','YES'))
+#Converts the DEAD column to a factor with two levels:'0' is labeled as 'NO'; '1' is labeled as 'YES'
+data_all$covid<-factor(data_all$covid,levels=c('0','1'),labels=c('NO','YES'))
+#Similarly converts the covid column to a factor with 'NO' and 'YES' labels.
+head(data_all)
+```
+
+
+```{r}
+# missing value data quality
+# Define a List of Columns to Check for Missing Values;Visualize Missing Data:
+missing_list<-c('WEIGHT'	,'HEIGHT'	,'DBP',	'SBP',	'RR',	'HR',	'O2SAT')
+# uses the aggr function from the VIM (Visualization and Imputation of Missing Values) package.
+# prop=TRUE: Shows the proportion of missing values instead of counts.
+# numbers=TRUE: Displays the number of missing values in the plot.
+aggr(data_all[,missing_list],prop=TRUE,numbers=TRUE)
+head(data_all)
+```
+
+```{r}
+# 1.Selecting Variables: create a vector cns that includes 'PATIENTID' and all variables from missing_list; missing_list likely contains names of variables with missing values.
+cns<-c(c('PATIENTID'),missing_list)
+# 2.Creates a new dataset data2 by selecting only the columns specified in cns from data_all. This focuses the imputation process on specific variables.
+data2=subset(data_all,select=cns)
+# 3.Uses the mice function (Multiple Imputation by Chained Equations) to impute missing values.
+# data2: The dataset to impute.
+# m = 5: Creates 5 imputed datasets (default value).
+# seed = 123: Sets a random seed for reproducibility.
+x<-mice(data2,m=5,seed=123)
+# Checking Imputation Methods:Displays the imputation method used for each variable.
+x$method
+```
+
+```{r}
+#Combines multiple imputed datasets, aggregates the imputed values (using mean), and updates the original dataset with these aggregated imputed values. It's a comprehensive approach to handling missing data through multiple imputation.
+# 1.Extracting Imputed Datasets:uses the complete function to extract 5 different imputed datasets (x1 to x5) from the mice object x.
+#x1<-complete(x,action=01)
+#x2<-complete(x,action=02)
+#x3<-complete(x,action=03)
+#x4<-complete(x,action=04)
+#x5<-complete(x,action=05)
+
+tb_data1<-complete(x,action=01)
+tb_data2<-complete(x,action=02)
+tb_data3<-complete(x,action=03)
+tb_data4<-complete(x,action=04)
+tb_data5<-complete(x,action=05)
+
+# 2.Selecting Relevant Columns from each imputed dataset.
+# tb_data1<-select(x1,PATIENTID, WEIGHT, HEIGHT,DBP,SBP,RR, HR,O2SAT)
+# tb_data2<-select(x2,PATIENTID, WEIGHT, HEIGHT,DBP,SBP,RR, HR,O2SAT)
+# tb_data3<-select(x3,PATIENTID, WEIGHT, HEIGHT,DBP,SBP,RR, HR,O2SAT)
+# tb_data4<-select(x4,PATIENTID, WEIGHT, HEIGHT,DBP,SBP,RR, HR,O2SAT)
+# tb_data5<-select(x5,PATIENTID, WEIGHT, HEIGHT,DBP,SBP,RR, HR,O2SAT)
+
+
+# 3. Renaming Columns:to avoid duplicates when merging.
+names(tb_data1)<-c('PATIENTID', 'WEIGHT1', 'HEIGHT1','DBP1','SBP1','RR1', 'HR1','O2SAT1')
+names(tb_data2)<-c("PATIENTID", 'WEIGHT2', 'HEIGHT2','DBP2','SBP2','RR2', 'HR2','O2SAT2')
+names(tb_data3)<-c("PATIENTID", 'WEIGHT3', 'HEIGHT3','DBP3','SBP3','RR3', 'HR3','O2SAT3')
+names(tb_data4)<-c("PATIENTID", 'WEIGHT4', 'HEIGHT4','DBP4','SBP4','RR4', 'HR4','O2SAT4')
+names(tb_data5)<-c("PATIENTID", 'WEIGHT5', 'HEIGHT5','DBP5','SBP5','RR5', 'HR5','O2SAT5')
+
+# 4.Merging Imputed Datasets:Combines all imputed datasets into one, matching by PATIENTID
+# Creates a list of the imputed datasets (data_list) and merges them into a single dataset (tb_data) using the Reduce function with merge.
+data_list <- list(tb_data1, tb_data2, tb_data3, tb_data4, tb_data5)
+tb_data <- Reduce(function(x, y) merge(x, y, by = "PATIENTID", all = TRUE), data_list)
+
+# 5.Define Functions to Calculate the Mean of Each Variable:
+#a: Calculates the mean value for each variable across the imputed datasets.
+#b: Identifies the most frequent value for each variable across the imputed datasets.
+a<-function(data,list){apply(data[, list], 1, function(x) {unique_x <- mean(x)
+})}
+b<-function(data,list){apply(data[, list], 1, function(x) {
+  unique_x <- unique(x)#
+unique_x[which.max(table(x))]
+})}
+
+# 6.Aggregating Imputed Values:Calculate the Mean Values for Each Variable:
+tb_data$WEIGHT<-a(data=tb_data,list = c("WEIGHT1", "WEIGHT2", "WEIGHT3", "WEIGHT4", "WEIGHT5"))
+tb_data$HEIGHT<-a(data=tb_data,list = c("HEIGHT1", "HEIGHT2", "HEIGHT3", "HEIGHT4", "HEIGHT5"))
+tb_data$DBP<-a(data=tb_data,list = c("DBP1", "DBP2", "DBP3", "DBP4", "DBP5"))
+tb_data$SBP<-a(data=tb_data,list = c("SBP1", "SBP2", "SBP3", "SBP4", "SBP5"))
+tb_data$RR<-a(data=tb_data,list = c("RR1", "RR2", "RR3", "RR4", "RR5"))
+tb_data$HR<-a(data=tb_data,list = c("HR1", "HR2", "HR3", "HR4", "HR5"))
+tb_data$O2SAT<-a(data=tb_data,list = c("O2SAT1", "O2SAT2", "O2SAT3", "O2SAT4", "O2SAT5"))
+
+# 7.Selecting Final Columns:Keeps only the aggregated columns and PATIENTID.
+#tb_data<-select(tb_data,c("PATIENTID",'WEIGHT', 'HEIGHT' ,'DBP', 'SBP', 'RR' ,'HR', 'O2SAT'))
+
+# 8.Saving Results:
+write_xlsx(tb_data, "tb_data.xlsx")
+
+# 9. Updating Original Dataset: Removes original columns from data_all and replaces them with the imputed and aggregated values.
+columns_to_delete<-c('WEIGHT', 'HEIGHT' ,'DBP', 'SBP', 'RR' ,'HR', 'O2SAT')
+data_all <- data_all[, !(names(data_all) %in% columns_to_delete)]
+data_all=merge(data_all,tb_data,by.x = 'PATIENTID', by.y = 'PATIENTID')
+```
+
+
+
+
+```{r}
+#Performs normality tests on specified patient measurements, grouped by COVID status, using the Shapiro-Wilk test. It determines whether each variable is normally distributed within each group, aiding in deciding the appropriate statistical tests and methods for further analysis. 
+
+# 1.Defines and uses functions to perform Shapiro-Wilk normality tests on multiple variables across two groups. Steps:
+# Initialize Result DataFrame: Creates an empty DataFrame result to store test results.
+# Iterate Through Columns: For each column in cols, performs the Shapiro-Wilk test.
+# Shapiro-Wilk Test: Uses tapply to apply the shapiro.test function to each group in data[[group]].
+# Check Normality: Combines p-values from both groups to determine normality (p.value > 0.05 indicates normal distribution).
+# Store Results: Appends the test results to the result DataFrame.
+# Remove Initial Empty Row: Removes the initial empty row from result.
+# Return Results: Returns the completed result DataFrame.
+multi_shapiro <- function(cols, group, data) { 
+  result <- data.frame('Characteristics'='','P1'=0,'P2'=0, 'NormalDistribution' = '')  
+  
+
+  for (col in cols) {     
+    shapiro <- tapply(data[[col]],data[[group]],shapiro.test)    
+    isNormal = ifelse(shapiro[[1]]$p.value > 0.05 & shapiro[[2]]$p.value > 0.05, 'true', 'false')     
+    row = c(col, shapiro[[1]]$p.value, shapiro[[2]]$p.value, isNormal)     
+result = rbind(result, row)  }  
+  result = result[-1,]  
+  return(result)}
+
+# 2.Define Function to Select Normal Distribution Variables:To filter and return the variables that are normally distributed.
+   #-Filter Variables: Selects the Characteristics column where NormalDistribution is 'true'.
+   #-Return Normal Variables: Returns the filtered variable names.
+pick_nd_vars <- function(res) {  
+  return(res$Characteristics[res$NormalDistribution == 'true'])}
+
+# 3.Specify Columns to Test:Defines a vector of column names to be tested for normality
+columns_to_test<-c('WEIGHT', 'HEIGHT' ,'DBP', 'SBP', 'RR' ,'HR', 'O2SAT')
+
+
+# 4.Perform Normality Tests:perform the Shapiro-Wilk test for normality on the specified columns, grouped by the 'covid' variable. Steps:
+   #-Call Function: Calls multi_shapiro with the specified columns, grouping variable (covid), and dataset (data_all).
+   #-Store Results: Stores the results in res.
+   #-Display Results: Displays the results of the normality tests.
+res<-multi_shapiro(columns_to_test,'covid',data_all)
+res
+```
+
+
+
+```{r}
+# This code reads and processes patient data, computes the length of stay, selects variables based on specified criteria, and generates a comprehensive descriptive summary table with a detailed examination of both categorical and continuous variables, particularly focusing on those with non-normal distributions.
+
+# Calculating Length of Stay:
+data_all$los=data_all$DIS_DATE-data_all$ADM_DATE
+
+# Loading Feature Information:
+feature<- read_excel("/Users/r.h.wang/Documents/Mst HD/0. Disso Writing/Analytics/R/page snomed code.xlsx", 
+                       sheet = "feature")
+
+# Selecting Covariates:
+# Selects names of features where 'x' column is greater than 0.
+# Adds 'los' to this list of covariates.
+covs<-feature[feature$x>0,'name']$name
+covs<-c(covs,'los')
+
+# Creating Table One:uses the CreateTableOne function to create a summary table.
+   # vars = covs: Uses the selected covariates.
+   # strata = "covid": Stratifies the data by the 'covid' variable.
+   # addOverall = TRUE: Includes an overall column in the table.
+tab <- CreateTableOne(vars = covs,
+                      strata = "covid",
+                      data = data_all,addOverall = TRUE
+                      )
+
+# Defining Biomarkers:likely to be treated as non-normally distributed variables.
+biomarkers <- c('WEIGHT', 'HEIGHT' ,'DBP', 'SBP', 'RR' ,'HR', 'O2SAT','los','ITU_hour','cardiovascular_adminID_num')
+
+
+# Print the Table with Specific Formatting:
+   # showAllLevels = T: Displays all levels of categorical variables.
+   # smd = T: Computes standardized mean differences.
+   # nonnormal = biomarkers: Specifies the non-normally distributed variables.
+   # exact = ...: Lists categorical variables for which exact tests should be conducted.
+   # catDigits = 2, contDigits = 2, pDigits = 3: Sets the number of digits for categorical, continuous, and p-values, respectively.
+   # quote = FALSE: Removes quotation marks from character values.
+   # noSpaces = TRUE: Removes spaces used for alignment.
+   # printToggle = TRUE: Prints the table output.
+tsave1=print(tab,showAllLevels = T,smd = T,
+             nonnormal = biomarkers,exact=c('AGE_GRP_AT_ADM','Coronary arteriosclerosis','Obesity','Fever','Peripheral vascular disease','Abdominal pain','Diarrhea','Dizziness','Chest Pain','Liver disease','Cardiomyopathy','Heart valve disorder','Fatigue','Cough','Vomiting','Nausea','Headache'),
+             catDigits = 2,contDigits = 2,pDigits = 3,quote =FALSE, #
+             noSpaces = TRUE, #
+             printToggle = TRUE) 
+
+```
+
+
+
+```{r}
+#propensity score matching to balance covariates, creates a comprehensive descriptive summary table, and saves the matched dataset for further analysis. It ensures the data is well-prepared and the matching process is documented.
+
+library(MatchIt)
+
+#Renames the column "Chronic disease of respiratory" to "Chronic_disease_of_respiratory" in the data_all DataFrame to avoid spaces in the column name making it easier to use in formulas.
+names(data_all)[names(data_all) == "Chronic disease of respiratory"] <- "Chronic_disease_of_respiratory"
+
+#Set Seed for Reproducibility:ets the seed for random number generation to ensure reproducibility of the results.
+set.seed(50)
+
+#Perform Propensity Score Matching:
+   #formula: Specifies the treatment (covid) and covariates for matching.
+   #method = "nearest": Uses nearest neighbor matching.
+   #distance = "logit": Uses logistic regression for propensity scores.
+   #replace = FALSE: Sampling without replacement.
+   #caliper = 0.01: Sets maximum propensity score difference for matching.
+   #ratio = 1: One-to-one matching.
+m.out<-matchit(data=data_all,formula=covid~ETHNICITY +RR +HR+O2SAT +COPD+Obesity  ,
+method="nearest",distance="logit",replace=FALSE,caliper=0.01,ratio = 1)
+
+#Extract Matched Data:from the matchit object m.out
+data_matched<-match.data(m.out)
+
+#Create Descriptive Summary Table:
+tab <- CreateTableOne(vars = c('GENDER','CANCER' ,'cardiovascular_adminID_num' ,'AGE_GRP_AT_ADM' ,'RR' ,'HR','O2SAT' ,'Chronic_disease_of_respiratory','COPD','Obesity','los'),
+                      strata = "covid",
+                      data = data_matched,addOverall = TRUE                      )
+
+#Define Non-Normal Biomarkers:Creates a vector biomarkers containing variables identified as non-normally distributed.
+biomarkers <- c( 'RR' ,'HR', 'O2SAT','cardiovascular_adminID_num','los')
+
+#Print the Table with Specific Formatting:
+tsave2=print(tab,showAllLevels = T,smd = T,
+             nonnormal = biomarkers,exact=c('AGE_GRP_AT_ADM'),
+             catDigits = 2,contDigits = 2,pDigits = 3,quote =FALSE, 
+             noSpaces = TRUE, 
+             printToggle = TRUE) 
+
+#Save data
+write.csv(data_matched, "/Users/r.h.wang/Documents/Mst HD/0. Disso Writing/Analytics/R/data_matched1-4.csv", row.names = TRUE)
+```
+
+
+
+Logistic regression and Odd Ratio
+```{r}
+#performs a logistic regression analysis on a set of predictors to understand their relationship with the outcome DEAD. It refines the model using stepwise selection and calculates the odds ratios to interpret the effect sizes of the predictors.
+
+# 1.Model Construction:uses the matched data (data_matched) from the previous propensity score matching. Creates a generalized linear model (GLM) using the glm() function.
+#removed copd and Chronic disease of respiratory due to high corelation, keeping copd
+fm=glm(formula = DEAD ~ GENDER + CANCER + cardiovascular_adminID_num +covid+ AGE_GRP_AT_ADM + RR + HR +
+    O2SAT  + COPD + Obesity+los , family = binomial,
+    data = data_matched)
+
+# 2.Stepwise Model Selection:aims to find the most parsimonious model by iteratively adding or removing variables based on their contribution to the model fit
+fit.step<-step(fm,direction="both")
+
+# 3.Model Summary:
+#This prints a detailed summary of the final model after stepwise selection.
+#The summary typically includes coefficients, standard errors, z-values, and p-values for each variable in the model.
+#It also provides information on model fit, such as AIC (Akaike Information Criterion).
+summary(fit.step)
+
+# 4.Odds Ratios:
+#This calculates and displays the odds ratios for the variables in the final model, shows how each variable affects the odds of the outcome (DEAD).
+odds.ratio(fit.step)
+```
+
+
+
+```{r}
+#Uses the Variance Inflation Factor (VIF) to assess multicollinearity among predictor variables in a logistic regression model. By removing variables with high collinearity, it ensures a more robust and reliable model.
+
+#vif(fit.step): Calculates the Variance Inflation Factor for each predictor variable in the fitted logistic regression model fit.step.
+#Measures how much the variance of a regression coefficient is inflated due to multicollinearity with other predictors.
+#Interpretation:
+   #VIF > 10: Indicates high multicollinearity that may warrant attention.
+   #VIF > 5: Generally considered moderate to high multicollinearity.
+   #VIF < 5: Indicates acceptable levels of multicollinearity.
+vif(fit.step)
+
+```
+
+
+regression modeling.
+```{r}
+library(rms)
+library(stats)
+library(rmda)
+
+# Data Preparation: sets up the data distribution for the rms package, which is used for advanced regression modeling.
+ddist <- datadist(data_matched)
+options(datadist='ddist')
+
+# Logistic Regression Model:Fits a logistic regression model predicting DEAD (mortality) based on CANCER, covid, RR (respiratory rate), and HR (heart rate). The summary provides model details.
+model <- lrm( DEAD ~  CANCER +covid +RR + HR ,
+    data = data_matched,  x = TRUE,  y = TRUE)
+summary(model)
+
+#Creates and saves a nomogram: which is a graphical representation of the model for predicting risk.
+png("Nomogram_28_Oct.png",res=300, width = 3200, height = 2000)
+nomogram <- nomogram(model, fun = function(x)1/(1+exp(-x)),fun.at=c(0.1,0.3,0.5,0.7,0.9,0.99),lp = F,funlabel="Risk") 
+plot(nomogram,xfrac=.3,cex.axis=1,cex.lab=0.2,pin=c(12,12))
+dev.off()
+
+#Calibration Plot: Generates and saves a calibration plot, which assesses how well the model's predictions match observed outcomes.
+png("Calibration Plot_28_Oct.png",res=300, width = 1600, height = 1200)
+cali <- calibrate(model, B = 400) 
+plot(cali)
+dev.off()
+
+#Decision Curve Analysis (DCA):Performs and plots a decision curve analysis, which evaluates the clinical usefulness of the prediction model across different threshold probabilities.
+baseline.model <- decision_curve(yDEAD ~  CANCER +covid +RR + HR,
+                                 family=binomial(link='logit'),
+                                data = data_matched,
+                                thresholds = seq(0, .4, by = .005),
+                                bootstraps = 10)
+png("dca.png",res=300, width = 1600, height = 1200)
+plot_decision_curve(baseline.model,  
+                    curve.names = "logistic model",
+                    confidence.intervals=F, 
+                    cost.benefit.axis=F
+                    )
+dev.off()
+```
+
+```{r}
+
+# Load necessary libraries
+library(readr)
+library(dplyr)
+library(tableone)
+library(writexl)
+library(ggplot2)
+
+# Read data from CSV
+data_all <- read_csv("/Users/r.h.wang/Documents/Mst HD/0. Disso Writing/Analytics/R/data_matched1-4.csv")
+
+# Define a function to generate descriptive statistics report
+generate_report <- function(data, group_var, vars, non_normal_vars) {
+  # Create descriptive summary table
+  tab <- CreateTableOne(vars = vars, strata = group_var, data = data, addOverall = TRUE)
+  
+  # Print the table with specific formatting
+  report <- print(tab, showAllLevels = TRUE, smd = TRUE, nonnormal = non_normal_vars,
+                  catDigits = 2, contDigits = 2, pDigits = 3, quote = FALSE, noSpaces = TRUE, printToggle = TRUE)
+  
+  # Convert report to data frame and set row names
+  report_df <- as.data.frame(report)
+  rownames(report_df) <- rownames(report)
+  
+  return(report_df)
+}
+
+# Variables to include in the report
+vars <- c('GENDER', 'CANCER', 'cardiovascular_adminID_num', 'AGE_GRP_AT_ADM',
+          'RR', 'HR', 'O2SAT', 'Chronic_disease_of_respiratory', 'COPD', 'Obesity', 'los')
+
+# Define non-normal variables
+non_normal_vars <- c('RR', 'HR', 'O2SAT', 'cardiovascular_adminID_num', 'los')
+
+# Generate the report
+report <- generate_report(data_all, "covid", vars, non_normal_vars)
+
+# Print the report to console
+print(report)
+
+# Optionally save the report to a CSV file
+write_csv(report, "/Users/r.h.wang/Documents/Mst HD/0. Disso Writing/Analytics/2710_ongoing report/Descriptive_Statistics_Report.csv")
+
+# Generate box plots for visual representation
+# Define continuous variables
+cont_vars <- c('RR', 'HR', 'O2SAT', 'los')
+
+# Create box plots
+for (var in cont_vars) {
+  plot <- ggplot(data_all, aes_string(x = 'covid', y = var, fill = 'covid')) +
+          geom_boxplot() +
+          labs(title = paste('Box Plot of', var, 'by COVID Status'),
+               x = 'COVID Status',
+               y = var) +
+          theme_minimal()
+  
+  ggsave(filename = paste0("/Users/r.h.wang/Documents/Mst HD/0. Disso Writing/Analytics/2710_ongoing report/", var, "_boxplot.png"), plot = plot)
+}
+
+```
+
+bad code
+```{r}
+
+
+```
+
+
+Survival Analysis report
+```{r}
+# Load required libraries
+library(survival)
+library(survminer)
+library(dplyr)
+
+# Assuming data_matched is already loaded. If not, load it:
+# data_matched <- read.csv("path/to/your/data_matched.csv")
+
+# Prepare data for survival analysis
+data_matched <- data_matched %>%
+  mutate(
+    time = as.numeric(difftime(DIS_DATE, ADM_DATE, units = "days")),
+    event = as.numeric(DEAD == 'YES')
+  ) %>%
+  filter(!is.na(time) & time > 0 & time < 365)  # Remove extreme values and NAs
+
+# Fit Kaplan-Meier survival curves
+km_fit <- survfit(Surv(time, event) ~ covid, data = data_matched)
+
+# Plot Kaplan-Meier curves
+km_plot <- ggsurvplot(km_fit,
+           data = data_matched,
+           risk.table = TRUE,
+           pval = TRUE,
+           conf.int = TRUE,
+           xlab = "Time in days",
+           ylab = "Survival probability",
+           legend.title = "COVID Status",
+           legend.labs = c("Non-COVID", "COVID"),
+           risk.table.height = 0.25,
+           ggtheme = theme_bw())
+
+print(km_plot)
+
+# Log-rank test
+log_rank_test <- survdiff(Surv(time, event) ~ covid, data = data_matched)
+print(log_rank_test)
+
+# Cox proportional hazards model
+cox_model <- coxph(Surv(time, event) ~ covid + CANCER + RR + HR + 
+                   COPD + Obesity + cardiovascular_adminID_num + AGE_GRP_AT_ADM, 
+                   data = data_matched)
+
+# Print model summary
+print(summary(cox_model))
+
+# Check proportional hazards assumption
+ph_test <- cox.zph(cox_model)
+print(ph_test)
+
+# Plot Schoenfeld residuals
+ggcoxzph(ph_test)
+
+# Forest plot of hazard ratios
+ggforest(cox_model, data = data_matched)
+
+# Survival curves adjusted for covariates
+adjusted_survival <- ggadjustedcurves(cox_model, data = data_matched, variable = "covid")
+print(adjusted_survival)
+
+# Save plots
+ggsave("kaplan_meier_plot.png", plot = km_plot$plot, width = 10, height = 8)
+ggsave("schoenfeld_residuals.png", plot = ggcoxzph(ph_test), width = 12, height = 10)
+ggsave("forest_plot.png", plot = ggforest(cox_model, data = data_matched), width = 10, height = 8)
+ggsave("adjusted_survival_curves.png", plot = adjusted_survival, width = 10, height = 8)
+```
+
+
+
+Survival Analysis report2
+```{r}
+# Load required libraries
+library(survival)
+library(survminer)
+library(dplyr)
+
+# Assuming data_matched is already loaded. If not, load it:
+# data_matched <- read.csv("path_to_your_data.csv")
+
+# Print column names to check available variables
+print(colnames(data_matched))
+
+# Prepare time and event variables
+# Replace 'los' with your actual time variable name if different
+# Replace 'DEAD' with your actual event variable name if different
+data_matched <- data_matched %>%
+  mutate(
+    time_variable = as.numeric(los),
+    event_variable = as.numeric(DEAD == 'YES')
+  )
+
+# Verify the preparation steps
+print(unique(data_matched$time_variable))
+print(unique(data_matched$event_variable))
+
+# Ensure no infinite or extremely large values
+data_matched <- data_matched %>%
+  filter(is.finite(time_variable) & is.finite(event_variable))
+
+# Create a survival object
+surv_object <- Surv(time = data_matched$time_variable, event = data_matched$event_variable)
+
+# Fit Kaplan-Meier survival curves
+km_fit <- survfit(surv_object ~ covid, data = data_matched)
+
+# Plot Kaplan-Meier curves
+km_plot <- ggsurvplot(km_fit,
+                      data = data_matched,
+                      risk.table = TRUE,
+                      pval = TRUE,
+                      conf.int = TRUE,
+                      xlim = c(0, max(data_matched$time_variable, na.rm = TRUE)),
+                      xlab = "Time in days",
+                      ylab = "Survival probability",
+                      legend.title = "COVID Status",
+                      legend.labs = c("Non-COVID", "COVID"),
+                      risk.table.height = 0.25,
+                      ggtheme = theme_bw())
+
+# Save the Kaplan-Meier plot
+ggsave(filename = "/Users/r.h.wang/Documents/Mst HD/0. Disso Writing/Analytics/2710_ongoing report/survival_km_plot.png", plot = km_plot$plot)
+
+# Log-rank test
+log_rank_test <- survdiff(surv_object ~ covid, data = data_matched)
+print(log_rank_test)
+
+# Cox proportional hazards model including comorbidities
+cox_model <- coxph(surv_object ~ covid + CANCER + RR + HR + O2SAT + COPD + Obesity + Chronic_disease_of_respiratory + cardiovascular_adminID_num + GENDER + AGE_GRP_AT_ADM, data = data_matched)
+summary(cox_model)
+
+# Check proportional hazards assumption
+ph_test <- cox.zph(cox_model)
+print(ph_test)
+plot(ph_test)
+
+# Forest plot of hazard ratios
+ggforest(cox_model, data = data_matched)
+
+```
+
+
+```{r}
+library(survival)
+
+# Assuming 'time' is your time-to-event variable and 'event' is your event indicator
+cox_model <- coxph(Surv(time, event) ~ covid + CANCER + RR + HR + O2SAT + COPD + Obesity, data = data_matched)
+summary(cox_model)
+```
+
+
+```{r}
+library(cobalt)
+#GENDER + CANCER + cardiovascular_adminID_num +covid+ AGE_GRP_AT_ADM + RR + HR + O2SAT  + COPD + Obesity+los 
+# Assuming 'm.out' is your MatchIt object and 'data' is your original dataset
+bal.tab <- bal.tab(m.out, data = data, un = TRUE, m.threshold = 0.1)
+print(bal.tab)
+
+# Create a love plot
+love.plot(bal.tab, threshold = 0.1)
+
+# Create density plots for continuous variables
+# bal.plot(m.out, var.name = "GENDER", which = "both")
+# bal.plot(m.out, var.name = "CANCER", which = "both")
+bal.plot(m.out, var.name = "O2SAT", which = "both")
+# bal.plot(m.out, var.name = "cardiovascular_adminID_num", which = "both")
+# bal.plot(m.out, var.name = "covid", which = "both")
+# bal.plot(m.out, var.name = "AGE_GRP_AT_ADM", which = "both")
+bal.plot(m.out, var.name = "RR", which = "both")
+bal.plot(m.out, var.name = "HR", which = "both")
+bal.plot(m.out, var.name = "O2SAT", which = "both")
+bal.plot(m.out, var.name = "COPD", which = "both")
+bal.plot(m.out, var.name = "Obesity", which = "both")
+# bal.plot(m.out, var.name = "los", which = "both")
+```
